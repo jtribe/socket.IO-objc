@@ -1,6 +1,6 @@
 //
 //  SocketIO.m
-//  v0.23 ARC
+//  v0.22 ARC
 //
 //  based on 
 //  socketio-cocoa https://github.com/fpotter/socketio-cocoa
@@ -76,7 +76,8 @@ NSString* const SocketIOException = @"SocketIOException";
 @synthesize isConnected = _isConnected, 
             isConnecting = _isConnecting, 
             useSecure = _useSecure, 
-            delegate = _delegate;
+            delegate = _delegate,
+            templateRequest = _templateRequest;
 
 - (id) initWithDelegate:(id<SocketIODelegate>)delegate
 {
@@ -90,6 +91,26 @@ NSString* const SocketIOException = @"SocketIOException";
     return self;
 }
 
+
+- (void) connectWithRequest:(NSURLRequest *)request
+{
+    // set request as template. It's used later in openSocket
+    self.templateRequest = request;
+    // extract all goodies from the template request (e.g. params)
+    NSArray *parameters = [request.URL.parameterString componentsSeparatedByString:@";"];
+    NSMutableDictionary *paramDict = [NSMutableDictionary dictionary];
+    [parameters enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
+      NSArray *pair = [obj componentsSeparatedByString:@"="];
+      if (pair) [paramDict setObject:[pair objectAtIndex:0] forKey:[pair objectAtIndex:1]];
+    }];
+    // use the base method to connect to the host using the goodies from the template request object
+    [self connectToHost:request.URL.host
+                 onPort:[request.URL.port integerValue]
+             withParams:paramDict
+          withNamespace:@"" // TODO extract name space form uri?
+   withHTTPHeaderFields:request.allHTTPHeaderFields];
+}
+
 - (void) connectToHost:(NSString *)host onPort:(NSInteger)port
 {
     [self connectToHost:host onPort:port withParams:nil withNamespace:@""];
@@ -101,6 +122,11 @@ NSString* const SocketIOException = @"SocketIOException";
 }
 
 - (void) connectToHost:(NSString *)host onPort:(NSInteger)port withParams:(NSDictionary *)params withNamespace:(NSString *)endpoint
+{
+  [self connectToHost:host onPort:port withParams:params withNamespace:@"" withHTTPHeaderFields:nil];
+}
+
+- (void) connectToHost:(NSString *)host onPort:(NSInteger)port withParams:(NSDictionary *)params withNamespace:(NSString *)endpoint withHTTPHeaderFields:(NSDictionary*)allHeaderFields
 {
     if (!_isConnected && !_isConnecting) {
         _isConnecting = YES;
@@ -133,10 +159,11 @@ NSString* const SocketIOException = @"SocketIOException";
                 
         
         // make a request
-        NSURLRequest *request = [NSURLRequest requestWithURL:url
+        NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url
                                                  cachePolicy:NSURLRequestReloadIgnoringLocalAndRemoteCacheData 
                                              timeoutInterval:10.0];
-        
+        [request setAllHTTPHeaderFields:allHeaderFields];
+      
         NSURLConnection *connection = [NSURLConnection connectionWithRequest:request 
                                                                     delegate:self];
         if (connection) {
@@ -180,18 +207,18 @@ NSString* const SocketIOException = @"SocketIOException";
     [self send:packet];
 }
 
-- (void) sendEvent:(NSString *)eventName withData:(id)data
+- (void) sendEvent:(NSString *)eventName withData:(NSDictionary *)data
 {
     [self sendEvent:eventName withData:data andAcknowledge:nil];
 }
 
-- (void) sendEvent:(NSString *)eventName withData:(id)data andAcknowledge:(SocketIOCallback)function
+- (void) sendEvent:(NSString *)eventName withData:(NSDictionary *)data andAcknowledge:(SocketIOCallback)function
 {
     NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithObject:eventName forKey:@"name"];
 
     // do not require arguments
     if (data != nil) {
-        [dict setObject:[NSArray arrayWithObject:data] forKey:@"args"];
+        [dict setObject:data forKey:@"args"];
     }
     
     SocketIOPacket *packet = [[SocketIOPacket alloc] initWithType:@"event"];
@@ -218,24 +245,33 @@ NSString* const SocketIOException = @"SocketIOException";
 
 - (void) openSocket
 {
+    _webSocket = nil;
     NSString *urlStr;
     NSString *format;
     if(_port) {
-        format = _useSecure ? kSecureSocketPortURL : kInsecureSocketPortURL;
-        urlStr = [NSString stringWithFormat:format, _host, _port, _sid];
+      format = _useSecure ? kSecureSocketPortURL : kInsecureSocketPortURL;
+      urlStr = [NSString stringWithFormat:format, _host, _port, _sid];
     }
     else {
-        format = _useSecure ? kSecureSocketURL : kInsecureSocketURL;
-        urlStr = [NSString stringWithFormat:format, _host, _sid];
+      format = _useSecure ? kSecureSocketURL : kInsecureSocketURL;
+      urlStr = [NSString stringWithFormat:format, _host, _sid];
     }
     NSURL *url = [NSURL URLWithString:urlStr];
 
-    _webSocket = nil;
-    
-    _webSocket = [[SRWebSocket alloc] initWithURL:url];
+    if (self.templateRequest) {
+      // If there is a template request property then we need to deal with the header fields (e.g for load balancing)
+      NSMutableURLRequest *wsRequest = [NSMutableURLRequest requestWithURL:url];
+      [wsRequest setAllHTTPHeaderFields:[self.templateRequest allHTTPHeaderFields]];
+      
+      _webSocket = [[SRWebSocket alloc] initWithURLRequest:wsRequest];
+      [self log:[NSString stringWithFormat:@"Opening %@", wsRequest]];
+    }
+    else {
+      _webSocket = [[SRWebSocket alloc] initWithURL:url];
+      [self log:[NSString stringWithFormat:@"Opening %@", url]];
+    }
     _webSocket.delegate = self;
-    [self log:[NSString stringWithFormat:@"Opening %@", url]];
-    [_webSocket open];    
+    [_webSocket open];
 }
 
 - (void) openXHRPolling
@@ -602,25 +638,6 @@ NSString* const SocketIOException = @"SocketIOException";
 # pragma mark Handshake callbacks (NSURLConnectionDataDelegate)
 - (void) connection:(NSURLConnection *)connection didReceiveResponse:(NSURLResponse *)response 
 {
-    // check for server status code (http://gigliwood.com/weblog/Cocoa/Q__When_is_an_conne.html)
-    if ([response respondsToSelector:@selector(statusCode)]) {
-        int statusCode = [((NSHTTPURLResponse *)response) statusCode];
-        [self log:[NSString stringWithFormat:@"didReceiveResponse() %i", statusCode]];
-        
-        if (statusCode >= 400) {
-            // stop connecting; no more delegate messages
-            [connection cancel];
-            
-            NSString *error = [NSString stringWithFormat:NSLocalizedString(@"Server returned status code %d", @""), statusCode];
-            NSDictionary *errorInfo = [NSDictionary dictionaryWithObject:error forKey:NSLocalizedDescriptionKey];
-            NSError *statusError = [NSError errorWithDomain:SocketIOError
-                                                       code:statusCode
-                                                   userInfo:errorInfo];
-            // call error callback manually
-            [self connection:connection didFailWithError:statusError];
-        }
-    }
-    
     [_httpRequestData setLength:0];
 }
 
@@ -645,50 +662,13 @@ NSString* const SocketIOException = @"SocketIOException";
 { 	
  	NSString *responseString = [[NSString alloc] initWithData:_httpRequestData encoding:NSASCIIStringEncoding];
 
-    [self log:[NSString stringWithFormat:@"connectionDidFinishLoading() %@", responseString]];
+    [self log:[NSString stringWithFormat:@"requestFinished() %@", responseString]];
     NSArray *data = [responseString componentsSeparatedByString:@":"];
-    // should be SID : heartbeat timeout : connection timeout : supported transports
-    
-    // check each returned value (thanks for the input https://github.com/taiyangc)
-    BOOL connectionFailed = false;
     
     _sid = [data objectAtIndex:0];
-    if ([_sid length] < 1 || [data count] < 4) {
+    if ([_sid length] < 1 || [data count] < 3) {
         // did not receive valid data, possibly missing a useSecure?
-        connectionFailed = true;
-    }
-
-    // check SID
-    [self log:[NSString stringWithFormat:@"sid: %@", _sid]];
-    NSString *regex = @"[^0-9]";
-    NSPredicate *regexTest = [NSPredicate predicateWithFormat:@"SELF MATCHES %@", regex];
-    if ([_sid rangeOfString:@"error"].location != NSNotFound || [regexTest evaluateWithObject:_sid]) {
-        [self connectToHost:_host onPort:_port withParams:_params withNamespace:_endpoint];
-        return;
-    }
-    
-    // check heartbeat timeout
-    _heartbeatTimeout = [[data objectAtIndex:1] floatValue];
-    if (_heartbeatTimeout == 0.0) {
-        // couldn't find float value -> fail
-        connectionFailed = true;
-    }
-    else {
-        // add small buffer of 7sec (magic xD)
-        _heartbeatTimeout += 7.0;
-    }
-    [self log:[NSString stringWithFormat:@"heartbeatTimeout: %f", _heartbeatTimeout]];
-    
-    // index 2 => connection timeout
-    
-    // get transports
-    NSString *t = [data objectAtIndex:3];
-    NSArray *transports = [t componentsSeparatedByString:@","];
-    [self log:[NSString stringWithFormat:@"transports: %@", transports]];
-    // TODO: check which transports are supported by the server
-    
-    // if connection didn't return the values we need -> fail
-    if (connectionFailed) {
+        
         if ([_delegate respondsToSelector:@selector(socketIO:failedToConnectWithError:)]) {
             NSError* error;
             
@@ -704,6 +684,26 @@ NSString* const SocketIOException = @"SocketIOException";
         
         return;
     }
+
+    [self log:[NSString stringWithFormat:@"sid: %@", _sid]];
+    NSString *regex = @"[^0-9]";
+    NSPredicate *regexTest = [NSPredicate predicateWithFormat:@"SELF MATCHES %@", regex];
+    if ([_sid rangeOfString:@"error"].location != NSNotFound || [regexTest evaluateWithObject:_sid]) {
+        [self connectToHost:_host onPort:_port withParams:_params withNamespace:_endpoint];
+        return;
+    }
+    
+    // add small buffer of 7sec (magic xD)
+    _heartbeatTimeout = [[data objectAtIndex:1] floatValue] + 7.0;
+    [self log:[NSString stringWithFormat:@"heartbeatTimeout: %f", _heartbeatTimeout]];
+    
+    // index 2 => connection timeout
+    
+    NSString *t = [data objectAtIndex:3];
+    NSArray *transports = [t componentsSeparatedByString:@","];
+    [self log:[NSString stringWithFormat:@"transports: %@", transports]];
+    
+    // TODO: check which transports are supported by the server
     
     // if websocket
     [self openSocket];
@@ -790,6 +790,8 @@ didReceiveAuthenticationChallenge:(NSURLAuthenticationChallenge *)challenge
     
     _queue = nil;
     _acks = nil;
+  
+    self.templateRequest = nil;
 }
 
 

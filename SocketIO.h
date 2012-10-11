@@ -1,6 +1,6 @@
 //
 //  SocketIO.h
-//  v0.23 ARC
+//  v0.22 ARC
 //
 //  based on 
 //  socketio-cocoa https://github.com/fpotter/socketio-cocoa
@@ -80,8 +80,11 @@ typedef enum {
 @property (nonatomic, readonly) BOOL isConnected, isConnecting;
 @property (nonatomic) BOOL useSecure;
 @property (nonatomic, unsafe_unretained) id<SocketIODelegate> delegate;
+@property (nonatomic, copy) NSURLRequest *templateRequest;
 
 - (id) initWithDelegate:(id<SocketIODelegate>)delegate;
+// use request as a template. Request object may contain cookies and other header fields that may be required for load balancers.
+- (void) connectWithRequest:(NSURLRequest *)request;
 - (void) connectToHost:(NSString *)host onPort:(NSInteger)port;
 - (void) connectToHost:(NSString *)host onPort:(NSInteger)port withParams:(NSDictionary *)params;
 - (void) connectToHost:(NSString *)host onPort:(NSInteger)port withParams:(NSDictionary *)params withNamespace:(NSString *)endpoint;
@@ -91,8 +94,8 @@ typedef enum {
 - (void) sendMessage:(NSString *)data withAcknowledge:(SocketIOCallback)function;
 - (void) sendJSON:(NSDictionary *)data;
 - (void) sendJSON:(NSDictionary *)data withAcknowledge:(SocketIOCallback)function;
-- (void) sendEvent:(NSString *)eventName withData:(id)data;
-- (void) sendEvent:(NSString *)eventName withData:(id)data andAcknowledge:(SocketIOCallback)function;
+- (void) sendEvent:(NSString *)eventName withData:(NSDictionary *)data;
+- (void) sendEvent:(NSString *)eventName withData:(NSDictionary *)data andAcknowledge:(SocketIOCallback)function;
 - (void) sendAcknowledgement:(NSString*)pId withArgs:(NSArray *)data;
 
 @end
