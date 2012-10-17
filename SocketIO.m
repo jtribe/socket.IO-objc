@@ -262,11 +262,17 @@ NSString* const SocketIOException = @"SocketIOException";
       // If there is a template request property then we need to deal with the header fields (e.g for load balancing)
       NSMutableURLRequest *wsRequest = [NSMutableURLRequest requestWithURL:url];
       [wsRequest setAllHTTPHeaderFields:[self.templateRequest allHTTPHeaderFields]];
+      // add all cookies to the request
+      for (NSHTTPCookie *cookie in [NSHTTPCookieStorage sharedHTTPCookieStorage].cookies) {
+        NSLog(@"Name: %@ : Value: %@, Expires: %@", cookie.name, cookie.value, cookie.expiresDate);
+        [wsRequest addValue:[NSString stringWithFormat:@"%@=%@", cookie.name, cookie.value] forHTTPHeaderField:@"Cookie"];
+      }
       
       _webSocket = [[SRWebSocket alloc] initWithURLRequest:wsRequest];
       [self log:[NSString stringWithFormat:@"Opening %@", wsRequest]];
     }
     else {
+      // THIS WILL NOT SEND COOKIES OVER THE WS
       _webSocket = [[SRWebSocket alloc] initWithURL:url];
       [self log:[NSString stringWithFormat:@"Opening %@", url]];
     }
