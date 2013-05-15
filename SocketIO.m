@@ -264,7 +264,7 @@ NSString* const SocketIOException = @"SocketIOException";
       [wsRequest setAllHTTPHeaderFields:[self.templateRequest allHTTPHeaderFields]];
       // add all cookies to the request
       for (NSHTTPCookie *cookie in [NSHTTPCookieStorage sharedHTTPCookieStorage].cookies) {
-        NSLog(@"Name: %@ : Value: %@, Expires: %@", cookie.name, cookie.value, cookie.expiresDate);
+        DLog(@"Name: %@ : Value: %@, Expires: %@", cookie.name, cookie.value, cookie.expiresDate);
         [wsRequest addValue:[NSString stringWithFormat:@"%@=%@", cookie.name, cookie.value] forHTTPHeaderField:@"Cookie"];
       }
       
@@ -654,7 +654,7 @@ NSString* const SocketIOException = @"SocketIOException";
 
 - (void) connection:(NSURLConnection *)connection didFailWithError:(NSError *)error 
 {
-    NSLog(@"ERROR: handshake failed ... %@", [error localizedDescription]);
+    DLog(@"ERROR: handshake failed ... %@", [error localizedDescription]);
     
     _isConnected = NO;
     _isConnecting = NO;
@@ -758,7 +758,7 @@ didReceiveAuthenticationChallenge:(NSURLAuthenticationChallenge *)challenge
 
 - (void) webSocket:(SRWebSocket *)webSocket didFailWithError:(NSError *)error
 {
-    NSLog(@"ERROR: Socket failed with error ... %@", [error localizedDescription]);
+    DLog(@"ERROR: Socket failed with error ... %@", [error localizedDescription]);
     // Assuming this resulted in a disconnect
     [self onDisconnect];
 }
@@ -778,7 +778,7 @@ didReceiveAuthenticationChallenge:(NSURLAuthenticationChallenge *)challenge
 - (void) log:(NSString *)message 
 {
 #if DEBUG_LOGS
-    NSLog(@"%@", message);
+    DLog(@"%@", message);
 #endif
 }
 
